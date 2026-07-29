@@ -4,6 +4,8 @@
 支持说话人分离（Speaker Diarization）
 """
 import json
+import os
+import requests
 from typing import List, Dict
 from http import HTTPStatus
 import dashscope
@@ -14,141 +16,291 @@ def transcribe_audio(file_path: str) -> List[Dict]:
     """
     调用百炼 Fun-ASR 模型进行语音转写（含说话人分离）
 
-    DashScope Fun-ASR API 调用方式：
-    1. 使用 dashscope.audio.asr.Transcription 异步调用
-    2. 传入本地音频文件路径
-    3. 启用 speaker_diarization 参数实现说话人分离
+    Fun-ASR API 流程:
+    1. 使用 Transcription.async_call 提交异步任务
+    2. Transcription.wait 轮询等待任务完成
+    3. 从返回的 transcription_url 下载转写结果文件
+    4. 解析 JSON 格式的转写结果，提取说话人和时间戳
 
-    @param file_path: 音频/视频文件的本地路径
+    @param file_path: 音频/视频文件的本地路径（绝对路径或相对路径）
     @return: 转写片段列表，每个片段包含 speaker, start_time, end_time, content
     @raises Exception: API 调用失败或模型返回错误
     """
-    # 设置 API Key
     dashscope.api_key = DASHSCOPE_API_KEY
+
+    # 将文件路径转为绝对路径，确保 DashScope SDK 能正确读取
+    abs_file_path = os.path.abspath(file_path)
+    file_url = f"file://{abs_file_path}"
+
+    print(f"[ASR] 开始转写: {abs_file_path}")
+    print(f"[ASR] 使用模型: {ASR_MODEL}")
 
     try:
         # ============================================================
-        # 调用 Fun-ASR 异步转写 API
-        # Fun-ASR 通过 Transcription.async_call 提交任务，
-        # 然后通过 Transcription.wait 轮询等待结果
+        # 步骤1: 提交异步转写任务
+        # Fun-ASR 需要先提交任务，再轮询等待结果
         # ============================================================
         task_response = dashscope.audio.asr.Transcription.async_call(
-            model=ASR_MODEL,  # "fun-asr"
-            file_urls=[f"file://{file_path}"],  # 本地文件使用 file:// 协议
-            parameters={
-                "speaker_diarization": {
-                    "speaker_count": None,  # None 表示自动检测说话人数量
-                },
-                "format": _get_file_format(file_path),  # 音频格式
-            },
+            model=ASR_MODEL,
+            file_urls=[file_url],
+            # Fun-ASR 的说话人分离参数直接作为顶层参数传递
+            diarization_enabled=True,
         )
+
+        print(f"[ASR] 任务提交响应: status_code={task_response.status_code}")
 
         # 检查任务提交是否成功
         if task_response.status_code != HTTPStatus.OK:
-            raise Exception(
-                f"ASR 任务提交失败: {task_response.code} - {task_response.message}"
-            )
+            error_msg = f"ASR 任务提交失败: code={task_response.code}, message={task_response.message}"
+            print(f"[ASR] ERROR: {error_msg}")
+            raise Exception(error_msg)
 
-        # 获取任务 ID，轮询等待转写完成
-        task_id = task_response.output["task_id"]
+        # ============================================================
+        # 步骤2: 轮询等待转写完成
+        # ============================================================
+        task_id = task_response.output.get("task_id", "")
+        print(f"[ASR] 任务ID: {task_id}, 等待转写完成...")
+
         result_response = dashscope.audio.asr.Transcription.wait(task=task_id)
 
-        # 检查转写结果
+        print(f"[ASR] 转写结果状态: status_code={result_response.status_code}")
+
+        # 检查转写是否成功
         if result_response.status_code != HTTPStatus.OK:
-            raise Exception(
-                f"ASR 转写失败: {result_response.code} - {result_response.message}"
-            )
+            error_msg = f"ASR 转写失败: code={result_response.code}, message={result_response.message}"
+            print(f"[ASR] ERROR: {error_msg}")
+            raise Exception(error_msg)
 
         # ============================================================
-        # 解析转写结果
-        # Fun-ASR 返回的结果中包含：
-        # - sentences: 带有时间戳的句子列表
-        # - speaker_id: 每个句子的说话人标识（启用说话人分离后）
+        # 步骤3: 解析转写结果
+        # Fun-ASR 返回格式:
+        # {
+        #   "output": {
+        #     "results": [{
+        #       "transcription_url": "https://..."  ← 转写结果下载地址
+        #     }]
+        #   }
+        # }
+        # 需要从 transcription_url 下载实际的转写文件
         # ============================================================
         output = result_response.output
-        if "results" not in output:
-            raise Exception("ASR 返回结果格式异常，缺少 results 字段")
+        print(f"[ASR] 输出结构: {json.dumps(output, ensure_ascii=False)[:500]}")
 
-        # 获取第一个（通常只有一个）转录结果
-        results = output["results"]
+        results = output.get("results", [])
         if not results:
-            return []  # 没有识别到任何语音内容
+            raise Exception("ASR 返回结果为空，未能识别到语音内容")
 
         transcription_result = results[0]
 
-        # 提取转写片段，包含说话人分离信息
-        segments = []
-        if "sentences" in transcription_result:
-            for sentence in transcription_result["sentences"]:
-                segment = {
-                    "speaker": sentence.get("speaker_id", "unknown_speaker"),
-                    "start_time": sentence.get("begin_time", 0) / 1000.0,  # 毫秒转秒
-                    "end_time": sentence.get("end_time", 0) / 1000.0,
-                    "content": sentence.get("text", "").strip(),
-                }
-                segments.append(segment)
+        # 方式1: 从 transcription_url 下载转写文件
+        transcription_url = transcription_result.get("transcription_url", "")
+        if transcription_url:
+            print(f"[ASR] 下载转写结果: {transcription_url}")
+            segments = _download_and_parse_transcription(transcription_url)
+            if segments:
+                print(f"[ASR] 成功解析 {len(segments)} 个转写片段")
+                return segments
 
-        # 如果没有 sentences 字段，尝试从整体文本中提取
-        if not segments and "transcription_urls" in transcription_result:
-            # 部分情况下需要从 URL 下载完整结果
-            segments = _parse_transcription_from_url(
-                transcription_result["transcription_urls"]
-            )
+        # 方式2: 如果有 sentences 字段，直接解析
+        sentences = transcription_result.get("sentences", [])
+        if sentences:
+            segments = _parse_sentences(sentences)
+            print(f"[ASR] 从sentences解析到 {len(segments)} 个片段")
+            if segments:
+                return segments
 
-        return segments
+        # 方式3: 尝试 transcription_urls (复数形式)
+        urls = transcription_result.get("transcription_urls", [])
+        if urls:
+            all_segments = []
+            for url in urls:
+                segs = _download_and_parse_transcription(url)
+                all_segments.extend(segs)
+            if all_segments:
+                print(f"[ASR] 从URLs解析到 {len(all_segments)} 个片段")
+                return all_segments
+
+        # 所有解析方式都失败了
+        raise Exception(
+            f"无法解析ASR转写结果。响应内容: {json.dumps(transcription_result, ensure_ascii=False)[:500]}"
+        )
 
     except Exception as e:
-        raise Exception(f"语音转写服务异常: {str(e)}")
+        error_msg = f"语音转写服务异常: {str(e)}"
+        print(f"[ASR] ERROR: {error_msg}")
+        raise Exception(error_msg)
 
 
-def _get_file_format(file_path: str) -> str:
-    """
-    根据文件扩展名确定音频格式参数
-    @param file_path: 文件路径
-    @return: 格式标识符（如 'mp3', 'wav', 'm4a', 'mp4'）
-    """
-    ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else "mp3"
-    # Fun-ASR 支持的主流音频格式
-    format_map = {
-        "mp3": "mp3",
-        "wav": "wav",
-        "m4a": "m4a",
-        "mp4": "mp4",
-        "aac": "aac",
-        "flac": "flac",
-        "ogg": "ogg",
-        "wma": "wma",
-    }
-    return format_map.get(ext, "mp3")
-
-
-def _parse_transcription_from_url(urls: List[str]) -> List[Dict]:
+def _download_and_parse_transcription(url: str) -> List[Dict]:
     """
     从转写结果 URL 下载并解析完整的转写文本
-    当 Fun-ASR 返回的是下载链接而非内嵌结果时使用
-    @param urls: 转写结果文件的 URL 列表
+    Fun-ASR 返回的 JSON/SRT 格式转写文件
+
+    @param url: 转写结果文件的下载 URL
     @return: 转写片段列表
     """
-    import requests
+    try:
+        resp = requests.get(url, timeout=60)
+        resp.raise_for_status()
+        raw_text = resp.text.strip()
+        print(f"[ASR] 下载的转写内容长度: {len(raw_text)} 字符")
+
+        # ============================================================
+        # 尝试 JSON 格式解析
+        # ============================================================
+        if raw_text.startswith("{"):
+            data = resp.json()
+            # 可能的 JSON 格式1: {"sentences": [...]}
+            if "sentences" in data:
+                return _parse_sentences(data["sentences"])
+            # 可能的 JSON 格式2: {"transcripts": [...]}
+            if "transcripts" in data:
+                return _parse_transcripts(data["transcripts"])
+            # 可能的 JSON 格式3: {"results": {...}}
+            if "results" in data:
+                results = data["results"]
+                if isinstance(results, dict):
+                    if "sentences" in results:
+                        return _parse_sentences(results["sentences"])
+                    if "transcripts" in results:
+                        return _parse_transcripts(results["transcripts"])
+            # 尝试通用的键
+            for key in ["sentences", "segments", "utterances", "transcripts"]:
+                if key in data:
+                    return _parse_sentences(data[key])
+
+        # ============================================================
+        # 尝试 SRT 字幕格式解析
+        # SRT 格式:
+        # 1
+        # 00:00:01,000 --> 00:00:05,000
+        # [speaker_1] 发言内容
+        # ============================================================
+        if raw_text[0].isdigit() or "--> " in raw_text:
+            return _parse_srt(raw_text)
+
+        # 无法识别的格式，记录并返回空
+        print(f"[ASR] 无法识别的转写格式: {raw_text[:200]}")
+        return []
+
+    except requests.RequestException as e:
+        print(f"[ASR] 下载转写文件失败: {e}")
+        return []
+    except json.JSONDecodeError:
+        # JSON 解析失败，尝试作为纯文本处理
+        print(f"[ASR] JSON解析失败，尝试SRT格式")
+        return _parse_srt(raw_text)
+
+
+def _parse_sentences(sentences: List[Dict]) -> List[Dict]:
+    """
+    解析 sentences 数组格式的转写结果
+    每个 sentence 包含 speaker_id/begin_time/end_time/text
+    """
+    segments = []
+    for i, sent in enumerate(sentences):
+        # 兼容多种字段名：speaker_id / speaker / spk
+        speaker = (
+            sent.get("speaker_id")
+            or sent.get("speaker")
+            or sent.get("spk")
+            or f"speaker_{i % 2 + 1}"
+        )
+        # 兼容多种时间单位：毫秒或秒
+        begin = sent.get("begin_time", sent.get("start_time", sent.get("begin", 0)))
+        end = sent.get("end_time", sent.get("end", 0))
+        # 如果时间值大于 1000，说明是毫秒单位，转换为秒
+        if isinstance(begin, (int, float)) and begin > 1000:
+            begin = begin / 1000.0
+        if isinstance(end, (int, float)) and end > 1000:
+            end = end / 1000.0
+
+        text = sent.get("text", sent.get("content", sent.get("sentence", "")))
+        if text.strip():
+            segments.append({
+                "speaker": str(speaker),
+                "start_time": float(begin),
+                "end_time": float(end),
+                "content": text.strip(),
+            })
+    return segments
+
+
+def _parse_transcripts(transcripts: List[Dict]) -> List[Dict]:
+    """解析 transcripts 数组格式（同 sentences 处理逻辑）"""
+    return _parse_sentences(transcripts)
+
+
+def _parse_srt(srt_text: str) -> List[Dict]:
+    """
+    解析 SRT 字幕格式的转写结果
+    如果包含说话人标注 [speaker_X] 则进行分离
+    """
+    import re
 
     segments = []
-    for url in urls:
-        try:
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-            data = response.json()
+    # 按空行分割每个字幕块
+    blocks = re.split(r"\n\s*\n", srt_text.strip())
+    speaker_counter = 1
+    last_speaker = None
 
-            # 解析结果：格式与 sentences 类似
-            if "sentences" in data:
-                for sentence in data["sentences"]:
-                    segment = {
-                        "speaker": sentence.get("speaker_id", "unknown_speaker"),
-                        "start_time": sentence.get("begin_time", 0) / 1000.0,
-                        "end_time": sentence.get("end_time", 0) / 1000.0,
-                        "content": sentence.get("text", "").strip(),
-                    }
-                    segments.append(segment)
-        except Exception:
+    for block in blocks:
+        lines = block.strip().split("\n")
+        if len(lines) < 2:
             continue
+
+        # 跳过序号行，找到时间戳行
+        time_line = None
+        text_lines = []
+        for line in lines:
+            if "-->" in line:
+                time_line = line
+            elif not line.strip().isdigit():
+                text_lines.append(line)
+
+        if not time_line:
+            continue
+
+        # 解析时间戳: 00:00:01,000 --> 00:00:05,000
+        times = re.findall(r"(\d+):(\d+):(\d+)[.,](\d+)", time_line)
+        if len(times) < 2:
+            continue
+
+        start_time = (
+            int(times[0][0]) * 3600
+            + int(times[0][1]) * 60
+            + int(times[0][2])
+            + int(times[0][3]) / 1000
+        )
+        end_time = (
+            int(times[1][0]) * 3600
+            + int(times[1][1]) * 60
+            + int(times[1][2])
+            + int(times[1][3]) / 1000
+        )
+
+        text = " ".join(text_lines).strip()
+        if not text:
+            continue
+
+        # 尝试提取说话人标签 [speaker_X]
+        speaker_match = re.match(r"\[([^\]]+)\]\s*", text)
+        if speaker_match:
+            speaker = speaker_match.group(1)
+            text = text[speaker_match.end() :].strip()
+            last_speaker = speaker
+        elif last_speaker:
+            # 同一说话人连续发言
+            speaker = last_speaker
+        else:
+            speaker = f"speaker_{speaker_counter}"
+            speaker_counter += 1
+
+        segments.append({
+            "speaker": speaker,
+            "start_time": start_time,
+            "end_time": end_time,
+            "content": text,
+        })
 
     return segments

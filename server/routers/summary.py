@@ -65,6 +65,10 @@ async def transcribe_meeting(
         # 3. 调用 Fun-ASR 进行语音转写（带说话人分离）
         segments = transcribe_audio(meeting.file_path)
 
+        # 3b. 如果转写结果为空，说明音频无法识别或解析失败
+        if not segments:
+            raise Exception("转写结果为空，音频可能无法识别或格式不支持")
+
         # 4. 删除旧的转写记录（如果已存在）
         db.query(Transcript).filter(Transcript.meeting_id == meeting_id).delete()
 
