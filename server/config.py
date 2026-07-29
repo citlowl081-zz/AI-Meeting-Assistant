@@ -10,8 +10,8 @@ import os
 # 使用 OpenAI 兼容模式调用，base_url 格式:
 #   https://{workspace-id}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
 # ============================================================
-DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "your-api-key-here")
-DASHSCOPE_WORKSPACE_ID = os.getenv("DASHSCOPE_WORKSPACE_ID", "your-workspace-id-here")
+DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "DASHSCOPE_API_KEY_REMOVED_ROTATE_IMMEDIATELY")
+DASHSCOPE_WORKSPACE_ID = os.getenv("DASHSCOPE_WORKSPACE_ID", "ws-ujry5px7m5k2m903")
 DASHSCOPE_BASE_URL = (
     f"https://{DASHSCOPE_WORKSPACE_ID}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
 )
@@ -30,7 +30,7 @@ ASR_MODEL = os.getenv("ASR_MODEL", "fun-asr")
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", "3308"))
 DB_USER = os.getenv("DB_USER", "root")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "your-db-password")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "123456")
 DB_NAME = os.getenv("DB_NAME", "meeting_assistant")
 
 # SQLAlchemy 数据库连接 URL
