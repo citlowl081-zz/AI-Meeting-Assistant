@@ -225,13 +225,31 @@ def _download_and_parse_transcription(url: str) -> List[Dict]:
         # ============================================================
         if raw_text.startswith("{"):
             data = resp.json()
+
+            # Fun-ASR 实际格式: {"transcripts": [{"sentences": [...], "text": "..."}]}
+            # sentences 在 transcripts[0] 内部
+            if "transcripts" in data:
+                transcripts_list = data["transcripts"]
+                if isinstance(transcripts_list, list) and transcripts_list:
+                    first_transcript = transcripts_list[0]
+                    # 优先取 sentences（含说话人分离+时间戳）
+                    if "sentences" in first_transcript:
+                        return _parse_sentences(first_transcript["sentences"])
+                    # 备用：取整体 text
+                    if "text" in first_transcript:
+                        text_val = first_transcript["text"]
+                        if isinstance(text_val, str) and text_val.strip():
+                            return [{
+                                "speaker": "speaker_1",
+                                "start_time": 0,
+                                "end_time": 0,
+                                "content": text_val.strip(),
+                            }]
+
             # 可能的 JSON 格式1: {"sentences": [...]}
             if "sentences" in data:
                 return _parse_sentences(data["sentences"])
-            # 可能的 JSON 格式2: {"transcripts": [...]}
-            if "transcripts" in data:
-                return _parse_transcripts(data["transcripts"])
-            # 可能的 JSON 格式3: {"results": {...}}
+            # 可能的 JSON 格式2: {"results": {...}}
             if "results" in data:
                 results = data["results"]
                 if isinstance(results, dict):
@@ -240,7 +258,7 @@ def _download_and_parse_transcription(url: str) -> List[Dict]:
                     if "transcripts" in results:
                         return _parse_transcripts(results["transcripts"])
             # 尝试通用的键
-            for key in ["sentences", "segments", "utterances", "transcripts"]:
+            for key in ["segments", "utterances"]:
                 if key in data:
                     return _parse_sentences(data[key])
 
