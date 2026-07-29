@@ -58,12 +58,50 @@ def transcribe_audio(file_path: str) -> List[Dict]:
 
     try:
         # ============================================================
+        # 步骤0: 上传文件到百炼 OSS
+        # Fun-ASR 是云端服务，无法直接读取本地 file:// 路径，
+        # 需要先将文件上传到阿里云 OSS，再用 OSS URL 调用转写
+        # ============================================================
+        print(f"[ASR] 正在上传文件到百炼OSS...")
+        file_size_mb = os.path.getsize(actual_file_path) / 1024 / 1024
+        print(f"[ASR] 文件大小: {file_size_mb:.1f}MB")
+
+        # 使用 dashscope 文件上传 API 将文件上传到 OSS
+        file_upload_response = dashscope.files.upload(
+            file=actual_file_path,
+            purpose="asr_transcription",
+        )
+        print(f"[ASR] 上传响应: status_code={file_upload_response.status_code}")
+
+        if file_upload_response.status_code != HTTPStatus.OK:
+            # 如果上传失败，尝试用本地 file:// 作为兜底
+            print(f"[ASR] OSS上传失败，尝试使用本地file://路径: {file_upload_response.message}")
+            oss_url = file_url
+        else:
+            # 获取上传后的 OSS 文件 URL
+            oss_url = file_upload_response.output.get("url", "")
+            if not oss_url:
+                # 某些版本 SDK 字段名不同，尝试多个可能的键
+                output_data = file_upload_response.output
+                if isinstance(output_data, dict):
+                    for key in ['oss_url', 'file_url', 'download_url']:
+                        if key in output_data:
+                            oss_url = output_data[key]
+                            break
+            if not oss_url:
+                # 最后兜底：记录无法获取，尝试用本地路径
+                print(f"[ASR] 无法获取OSS URL，响应内容: {file_upload_response.output}")
+                oss_url = file_url
+
+        print(f"[ASR] 文件URL: {oss_url[:80]}...")
+
+        # ============================================================
         # 步骤1: 提交异步转写任务
-        # Fun-ASR 需要先提交任务，再轮询等待结果
+        # 使用 OSS URL 而非 file:// 路径
         # ============================================================
         task_response = dashscope.audio.asr.Transcription.async_call(
             model=ASR_MODEL,
-            file_urls=[file_url],
+            file_urls=[oss_url],
             # Fun-ASR 的说话人分离参数直接作为顶层参数传递
             diarization_enabled=True,
         )
