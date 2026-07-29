@@ -66,32 +66,35 @@ def transcribe_audio(file_path: str) -> List[Dict]:
         file_size_mb = os.path.getsize(actual_file_path) / 1024 / 1024
         print(f"[ASR] 文件大小: {file_size_mb:.1f}MB")
 
-        # 使用 dashscope 文件上传 API 将文件上传到 OSS
-        file_upload_response = dashscope.files.upload(
-            file=actual_file_path,
+        # 使用 DashScope Files API 将文件上传到 OSS
+        # 流程: upload(file_path) → file_id → get(file_id) → OSS presigned URL
+        from dashscope.files import Files
+        files_api = Files()
+
+        # 步骤0a: 上传文件
+        upload_resp = files_api.upload(
+            file_path=actual_file_path,
             purpose="asr_transcription",
         )
-        print(f"[ASR] 上传响应: status_code={file_upload_response.status_code}")
+        print(f"[ASR] 上传响应: status_code={upload_resp.status_code}")
 
-        if file_upload_response.status_code != HTTPStatus.OK:
-            # 如果上传失败，尝试用本地 file:// 作为兜底
-            print(f"[ASR] OSS上传失败，尝试使用本地file://路径: {file_upload_response.message}")
-            oss_url = file_url
+        oss_url = file_url  # 默认用本地路径兜底
+        if upload_resp.status_code == HTTPStatus.OK:
+            uploaded_files = upload_resp.output.get("uploaded_files", [])
+            if uploaded_files:
+                # 步骤0b: 通过 file_id 获取 OSS URL
+                file_id = uploaded_files[0].get("file_id", "")
+                print(f"[ASR] file_id: {file_id}")
+                get_resp = files_api.get(file_id=file_id)
+                if get_resp.status_code == HTTPStatus.OK:
+                    oss_url = get_resp.output.get("url", "")
+                    print(f"[ASR] OSS URL获取成功")
+                else:
+                    print(f"[ASR] get OSS URL失败: {get_resp.message}")
+            else:
+                print(f"[ASR] 上传成功但无uploaded_files")
         else:
-            # 获取上传后的 OSS 文件 URL
-            oss_url = file_upload_response.output.get("url", "")
-            if not oss_url:
-                # 某些版本 SDK 字段名不同，尝试多个可能的键
-                output_data = file_upload_response.output
-                if isinstance(output_data, dict):
-                    for key in ['oss_url', 'file_url', 'download_url']:
-                        if key in output_data:
-                            oss_url = output_data[key]
-                            break
-            if not oss_url:
-                # 最后兜底：记录无法获取，尝试用本地路径
-                print(f"[ASR] 无法获取OSS URL，响应内容: {file_upload_response.output}")
-                oss_url = file_url
+            print(f"[ASR] 上传失败: {upload_resp.message}, 用本地file://兜底")
 
         print(f"[ASR] 文件URL: {oss_url[:80]}...")
 
