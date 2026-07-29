@@ -5,11 +5,15 @@
 """
 import json
 import os
+import subprocess
 import requests
 from typing import List, Dict
 from http import HTTPStatus
 import dashscope
 from config import DASHSCOPE_API_KEY, ASR_MODEL
+
+# Fun-ASR 原生支持的格式（不需要转换）
+NATIVE_ASR_FORMATS = {"wav", "mp3", "pcm"}
 
 
 def transcribe_audio(file_path: str) -> List[Dict]:
@@ -30,9 +34,26 @@ def transcribe_audio(file_path: str) -> List[Dict]:
 
     # 将文件路径转为绝对路径，确保 DashScope SDK 能正确读取
     abs_file_path = os.path.abspath(file_path)
-    file_url = f"file://{abs_file_path}"
+    actual_file_path = abs_file_path
 
-    print(f"[ASR] 开始转写: {abs_file_path}")
+    # ============================================================
+    # 自动转换音频格式
+    # .m4a, .mp4, .aac, .flac 等格式 Fun-ASR 可能解码失败，
+    # 使用 ffmpeg 自动转换为 WAV 格式再提交
+    # ============================================================
+    file_ext = os.path.splitext(abs_file_path)[1].lower().lstrip(".")
+    if file_ext not in NATIVE_ASR_FORMATS:
+        print(f"[ASR] 格式 {file_ext} 非原生支持，正在用ffmpeg转换为WAV...")
+        converted_path = _convert_to_wav(abs_file_path)
+        if converted_path:
+            actual_file_path = converted_path
+            print(f"[ASR] 已转换为WAV: {actual_file_path}")
+        else:
+            print(f"[ASR] ffmpeg转换失败，尝试直接使用原文件")
+
+    file_url = f"file://{actual_file_path}"
+
+    print(f"[ASR] 开始转写: {actual_file_path}")
     print(f"[ASR] 使用模型: {ASR_MODEL}")
 
     try:
@@ -72,19 +93,32 @@ def transcribe_audio(file_path: str) -> List[Dict]:
             raise Exception(error_msg)
 
         # ============================================================
-        # 步骤3: 解析转写结果
-        # Fun-ASR 返回格式:
-        # {
-        #   "output": {
-        #     "results": [{
-        #       "transcription_url": "https://..."  ← 转写结果下载地址
-        #     }]
-        #   }
-        # }
-        # 需要从 transcription_url 下载实际的转写文件
+        # 步骤3: 检查转写子任务状态
+        # Fun-ASR 可能 HTTP 200 但子任务失败（如音频解码失败）
         # ============================================================
         output = result_response.output
         print(f"[ASR] 输出结构: {json.dumps(output, ensure_ascii=False)[:500]}")
+
+        # 检查子任务状态
+        subtask_status = output.get("subtask_status", "")
+        if subtask_status == "FAILED":
+            # 从 results 中提取具体的错误码
+            results_data = output.get("results", [])
+            sub_error_code = ""
+            if results_data:
+                sub_error_code = results_data[0].get("subtask_status", "")
+            # DECOD 错误说明音频编码不被 Fun-ASR 支持
+            if "DECOD" in str(result_response.code) or "DECOD" in str(sub_error_code):
+                file_ext = os.path.splitext(file_path)[1].lower()
+                raise Exception(
+                    f"音频解码失败：{file_ext} 格式的编码不被 Fun-ASR 支持。"
+                    f"请将音频转换为 WAV 或 MP3 格式后重新上传。"
+                    f"(错误码: {result_response.code})"
+                )
+            raise Exception(
+                f"ASR 子任务执行失败。错误码: {result_response.code}，"
+                f"详情: {json.dumps(output, ensure_ascii=False)[:300]}"
+            )
 
         results = output.get("results", [])
         if not results:
@@ -304,3 +338,55 @@ def _parse_srt(srt_text: str) -> List[Dict]:
         })
 
     return segments
+
+
+def _convert_to_wav(file_path: str) -> str:
+    """
+    使用 ffmpeg 将音频文件转换为 16kHz 单声道 WAV 格式
+    Fun-ASR 对 WAV 格式支持最好，m4a/mp4/aac 等格式需先转换
+
+    ffmpeg 参数说明:
+    - -i: 输入文件
+    - -acodec pcm_s16le: 输出PCM 16-bit 编码
+    - -ar 16000: 采样率16kHz (Fun-ASR推荐)
+    - -ac 1: 单声道
+    - -y: 覆盖已有输出文件
+
+    @param file_path: 原始音频文件路径
+    @return: 转换后的WAV路径，失败返回空字符串
+    """
+    base = os.path.splitext(file_path)[0]
+    output_path = f"{base}_converted.wav"
+
+    # 已转换过则直接复用
+    if os.path.exists(output_path):
+        print(f"[ASR] 复用已有转换文件: {output_path}")
+        return output_path
+
+    try:
+        cmd = [
+            "ffmpeg",
+            "-i", file_path,
+            "-acodec", "pcm_s16le",
+            "-ar", "16000",
+            "-ac", "1",
+            "-y",
+            output_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode == 0 and os.path.exists(output_path):
+            size_mb = os.path.getsize(output_path) / 1024 / 1024
+            print(f"[ASR] ffmpeg转换成功: {size_mb:.1f}MB")
+            return output_path
+        else:
+            print(f"[ASR] ffmpeg转换失败: {result.stderr[:300]}")
+            return ""
+    except FileNotFoundError:
+        print("[ASR] ffmpeg 未安装，无法转换音频")
+        return ""
+    except subprocess.TimeoutExpired:
+        print("[ASR] ffmpeg 转换超时")
+        return ""
+    except Exception as e:
+        print(f"[ASR] ffmpeg 异常: {e}")
+        return ""
