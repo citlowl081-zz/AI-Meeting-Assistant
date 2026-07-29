@@ -26,27 +26,25 @@
             </template>
           </el-dropdown>
 
-          <el-dropdown @command="handleAction">
-            <el-button type="success" v-if="meeting?.status === 'uploaded' || meeting?.status === 'failed'">
-              处理 <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-            </el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item
-                  command="transcribe"
-                  :disabled="!['uploaded', 'transcribed', 'completed', 'failed'].includes(meeting?.status)"
-                >
-                  语音转写
-                </el-dropdown-item>
-                <el-dropdown-item
-                  command="summarize"
-                  :disabled="!['transcribed', 'completed'].includes(meeting?.status)"
-                >
-                  生成AI纪要
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+          <!-- 语音转写按钮：上传后/失败后/已有转写时可重新转写 -->
+          <el-button
+            type="primary"
+            :loading="loading && actionType === 'transcribe'"
+            :disabled="!canTranscribe"
+            @click="doTranscribe"
+          >
+            <el-icon><Microphone /></el-icon> {{ meeting?.status === 'transcribed' || meeting?.status === 'completed' ? '重新转写' : '语音转写' }}
+          </el-button>
+
+          <!-- 生成AI纪要按钮：转写完成后可生成 -->
+          <el-button
+            type="success"
+            :loading="loading && actionType === 'summarize'"
+            :disabled="!canSummarize"
+            @click="doSummarize"
+          >
+            <el-icon><MagicStick /></el-icon> {{ meeting?.status === 'completed' ? '重新生成纪要' : '生成AI纪要' }}
+          </el-button>
         </div>
       </div>
 
@@ -240,7 +238,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElNotification } from 'element-plus'
-import { Loading, EditPen } from '@element-plus/icons-vue'
+import { Loading, EditPen, Microphone, MagicStick } from '@element-plus/icons-vue'
 import AppLayout from '../components/AppLayout.vue'
 import {
   getMeetingDetail,
@@ -258,8 +256,21 @@ const router = useRouter()
 const meetingId = computed(() => Number(route.params.id))
 
 const loading = ref(false)
+const actionType = ref('')  // 当前正在执行的操作类型 'transcribe' | 'summarize'
 const meeting = ref(null)
 const activeTab = ref('transcript')
+
+// 是否可以转写：已上传/失败/已转写/已完成 状态下都可以
+const canTranscribe = computed(() => {
+  if (!meeting.value) return false
+  return ['uploaded', 'failed', 'transcribed', 'completed'].includes(meeting.value.status)
+})
+
+// 是否可以生成纪要：已转写/已完成 状态下可以
+const canSummarize = computed(() => {
+  if (!meeting.value) return false
+  return ['transcribed', 'completed'].includes(meeting.value.status)
+})
 
 // 转写数据
 const transcript = ref(null)
@@ -384,21 +395,11 @@ const loadSummary = async () => {
 }
 
 /**
- * 处理操作（转写/生成摘要）
- */
-const handleAction = async (command) => {
-  if (command === 'transcribe') {
-    await doTranscribe()
-  } else if (command === 'summarize') {
-    await doSummarize()
-  }
-}
-
-/**
  * 触发语音转写
  */
 const doTranscribe = async () => {
   loading.value = true
+  actionType.value = 'transcribe'
   ElMessage.info('正在提交语音转写任务，请稍候...')
   try {
     await transcribeMeeting(meetingId.value)
@@ -415,6 +416,7 @@ const doTranscribe = async () => {
     await loadMeeting() // 刷新状态（可能失败）
   } finally {
     loading.value = false
+    actionType.value = ''
   }
 }
 
@@ -423,6 +425,7 @@ const doTranscribe = async () => {
  */
 const doSummarize = async () => {
   loading.value = true
+  actionType.value = 'summarize'
   ElMessage.info('正在生成AI会议纪要，请稍候...')
   try {
     await summarizeMeeting(meetingId.value)
@@ -438,6 +441,7 @@ const doSummarize = async () => {
     await loadMeeting()
   } finally {
     loading.value = false
+    actionType.value = ''
   }
 }
 
