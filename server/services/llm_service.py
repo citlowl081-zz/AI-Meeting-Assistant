@@ -149,8 +149,8 @@ ACTION_ITEMS_PROMPT = ChatPromptTemplate.from_messages([
 5. 只返回 JSON 数组，不要其他内容
 
 示例格式：
-[{"content": "完成推荐算法优化方案", "responsible_person": "王工", "deadline": "2024-10-20"},
- {"content": "设计新用户引导原型", "responsible_person": null, "deadline": null}]"""),
+[{{"content": "完成推荐算法优化方案", "responsible_person": "王工", "deadline": "2024-10-20"}},
+ {{"content": "设计新用户引导原型", "responsible_person": null, "deadline": null}}]"""),
     ("human", "会议内容：\n\n{transcript_text}"),
 ])
 
