@@ -198,19 +198,35 @@ async def summarize_meeting(
 
     try:
         # === 并行调用 LLM 生成各类纪要 ===
+        # 所有 LLM 调用互相独立，使用线程池并行执行，大幅缩短总耗时
+        import concurrent.futures
 
-        # 5a. 生成全文摘要
-        full_summary = generate_summary(full_text)
-        keywords = extract_keywords(full_text)
+        # 摘要使用完整文本，关键词和待办只需前8000字即可
+        text_short = full_text[:8000]
 
-        # 5b. 提取待办事项
-        action_items_data = extract_action_items(full_text)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+            # 提交所有独立任务
+            future_summary = executor.submit(generate_summary, full_text)
+            future_keywords = executor.submit(extract_keywords, text_short)
+            future_actions = executor.submit(extract_action_items, text_short)
 
-        # 5c. 按发言人总结
-        speaker_summaries_data = {}
-        for speaker, texts in speaker_texts.items():
-            speaker_text = " ".join(texts)
-            speaker_summaries_data[speaker] = summarize_by_speaker(speaker, speaker_text)
+            # 每个发言人的总结也并行提交
+            future_speakers = {}
+            for speaker, texts in speaker_texts.items():
+                speaker_text = " ".join(texts)
+                future_speakers[speaker] = executor.submit(
+                    summarize_by_speaker, speaker, speaker_text
+                )
+
+            # 等待所有结果返回
+            full_summary = future_summary.result()
+            keywords = future_keywords.result()
+            action_items_data = future_actions.result()
+
+            # 收集发言人总结结果
+            speaker_summaries_data = {}
+            for speaker, future in future_speakers.items():
+                speaker_summaries_data[speaker] = future.result()
 
         # === 将结果存入数据库 ===
 
