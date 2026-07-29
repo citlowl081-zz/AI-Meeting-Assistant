@@ -240,7 +240,7 @@ def _download_and_parse_transcription(url: str) -> List[Dict]:
                         text_val = first_transcript["text"]
                         if isinstance(text_val, str) and text_val.strip():
                             return [{
-                                "speaker": "speaker_1",
+                                "speaker": "speaker1",
                                 "start_time": 0,
                                 "end_time": 0,
                                 "content": text_val.strip(),
@@ -291,14 +291,25 @@ def _parse_sentences(sentences: List[Dict]) -> List[Dict]:
     每个 sentence 包含 speaker_id/begin_time/end_time/text
     """
     segments = []
+    # 用于将原始speaker_id映射为统一的 speaker1, speaker2, ...
+    speaker_map = {}
+
     for i, sent in enumerate(sentences):
         # 兼容多种字段名：speaker_id / speaker / spk
-        speaker = (
+        raw_speaker = (
             sent.get("speaker_id")
             or sent.get("speaker")
             or sent.get("spk")
-            or f"speaker_{i % 2 + 1}"
         )
+        # 规范化说话人标签为 speaker1, speaker2, speaker3...
+        if raw_speaker is not None:
+            raw_key = str(raw_speaker)
+            if raw_key not in speaker_map:
+                speaker_map[raw_key] = f"speaker{len(speaker_map) + 1}"
+            speaker = speaker_map[raw_key]
+        else:
+            speaker = f"speaker{i % 2 + 1}"
+
         # 兼容多种时间单位：毫秒或秒
         begin = sent.get("begin_time", sent.get("start_time", sent.get("begin", 0)))
         end = sent.get("end_time", sent.get("end", 0))
@@ -386,7 +397,7 @@ def _parse_srt(srt_text: str) -> List[Dict]:
             # 同一说话人连续发言
             speaker = last_speaker
         else:
-            speaker = f"speaker_{speaker_counter}"
+            speaker = f"speaker{speaker_counter}"
             speaker_counter += 1
 
         segments.append({

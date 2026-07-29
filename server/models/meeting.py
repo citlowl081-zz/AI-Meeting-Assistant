@@ -38,6 +38,8 @@ class Meeting(Base):
         comment="处理状态",
     )
     error_message = Column(Text, nullable=True, comment="错误信息")
+    # JSON 格式存储说话人名称映射，如 {"speaker1": "张医生", "speaker2": "李家属"}
+    speaker_mapping = Column(Text, nullable=True, comment="说话人名称映射JSON")
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
     updated_at = Column(
         DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间"

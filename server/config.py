@@ -21,8 +21,9 @@ LLM_MODEL = os.getenv("LLM_MODEL", "qwen3.6-plus")
 # 嵌入模型：用于文本向量化，向量维度 2048
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-v4")
 EMBEDDING_DIMENSION = 2048
-# 语音识别模型：Fun-ASR，支持说话人分离
-ASR_MODEL = os.getenv("ASR_MODEL", "fun-asr")
+# 语音识别模型：paraformer-v2 中文识别率远优于 fun-asr，且原生支持说话人分离
+# 备选: fun-asr（兼容更多格式，但准确率较低）
+ASR_MODEL = os.getenv("ASR_MODEL", "paraformer-v2")
 
 # ============================================================
 # MySQL 数据库配置 (端口 3308)

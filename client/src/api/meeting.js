@@ -98,3 +98,29 @@ export async function exportMinutes(id, format = 'md') {
   })
   return response
 }
+
+/**
+ * 获取仪表盘统计数据
+ * @returns {Promise} { total_meetings, uploaded_count, transcribing_count, transcribed_count, summarizing_count, completed_count, failed_count }
+ */
+export function getDashboardStats() {
+  return api.get('/meetings/stats/dashboard')
+}
+
+/**
+ * 获取说话人名称映射
+ * @param {number} id - 会议ID
+ * @returns {Promise} { mapping: {...} }
+ */
+export function getSpeakerMapping(id) {
+  return api.get(`/meetings/${id}/speakers`)
+}
+
+/**
+ * 更新说话人名称映射
+ * @param {number} id - 会议ID
+ * @param {Object} mapping - { speaker1: '张医生', speaker2: '李家属' }
+ */
+export function updateSpeakerMapping(id, mapping) {
+  return api.put(`/meetings/${id}/speakers`, { mapping })
+}

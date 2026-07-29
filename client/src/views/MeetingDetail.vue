@@ -93,14 +93,57 @@
         <el-tabs v-model="activeTab" type="border-card">
           <!-- Tab 1: 语音转写 -->
           <el-tab-pane label="语音转写" name="transcript">
-            <div v-if="transcript?.segments?.length">
+            <!-- 说话人名称管理工具栏 -->
+            <div v-if="transcript?.speakers?.length" class="speaker-toolbar">
+              <span class="speaker-toolbar-title">说话人名称：</span>
+              <template v-for="spk in transcript.speakers" :key="spk">
+                <el-popover
+                  :visible="editingSpeaker === spk"
+                  placement="bottom"
+                  :width="220"
+                  trigger="click"
+                >
+                  <template #reference>
+                    <el-tag
+                      size="small"
+                      effect="dark"
+                      :color="getSpeakerColor(spk)"
+                      class="speaker-editable-tag"
+                      @click="editingSpeaker = spk"
+                      style="cursor: pointer;"
+                    >
+                      {{ getSpeakerName(spk) }}
+                      <el-icon style="margin-left: 4px;"><EditPen /></el-icon>
+                    </el-tag>
+                  </template>
+                  <div style="display: flex; gap: 8px;">
+                    <el-input
+                      v-model="speakerEditValue"
+                      size="small"
+                      placeholder="输入名称"
+                      @keyup.enter="saveSpeakerName(spk)"
+                    />
+                    <el-button type="primary" size="small" @click="saveSpeakerName(spk)">确定</el-button>
+                  </div>
+                </el-popover>
+              </template>
+              <el-button text size="small" type="primary" @click="resetSpeakerNames" v-if="hasCustomNames">
+                恢复默认
+              </el-button>
+            </div>
+
+            <div v-if="transcript?.segments?.length" style="margin-top: 12px;">
               <div
                 v-for="seg in transcript.segments"
                 :key="seg.sequence || seg.id"
                 class="transcript-segment"
               >
                 <div class="segment-header">
-                  <el-tag type="primary" size="small" effect="dark">{{ seg.speaker }}</el-tag>
+                  <el-tag
+                    size="small"
+                    effect="dark"
+                    :color="getSpeakerColor(seg.speaker)"
+                  >{{ getSpeakerName(seg.speaker) }}</el-tag>
                   <span class="segment-time">
                     {{ formatTime(seg.start_time) }} - {{ formatTime(seg.end_time) }}
                   </span>
@@ -197,7 +240,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElNotification } from 'element-plus'
-import { Loading } from '@element-plus/icons-vue'
+import { Loading, EditPen } from '@element-plus/icons-vue'
 import AppLayout from '../components/AppLayout.vue'
 import {
   getMeetingDetail,
@@ -206,6 +249,8 @@ import {
   summarizeMeeting,
   getMeetingSummary,
   exportMinutes,
+  getSpeakerMapping,
+  updateSpeakerMapping,
 } from '../api/meeting'
 
 const route = useRoute()
@@ -220,6 +265,79 @@ const activeTab = ref('transcript')
 const transcript = ref(null)
 // 完整纪要数据（摘要 + 待办 + 发言人总结）
 const minutesData = ref(null)
+
+// ============================================================
+// 说话人名称管理
+// ============================================================
+// 说话人名称映射 { speaker1: "张医生", speaker2: "李家属" }
+const speakerMapping = ref({})
+// 当前正在编辑的说话人
+const editingSpeaker = ref(null)
+const speakerEditValue = ref('')
+// 是否有自定义名称
+const hasCustomNames = computed(() => Object.keys(speakerMapping.value).length > 0)
+
+// 说话人颜色列表（不同说话人不同颜色）
+const speakerColors = ['#409EFF', '#67C23A', '#E6A23C', '#F56C6C', '#909399', '#17B3A3', '#9B59B6', '#34495E']
+
+/**
+ * 获取说话人的显示名称（优先使用自定义名，否则用原始标签）
+ */
+const getSpeakerName = (speaker) => {
+  return speakerMapping.value[speaker] || speaker
+}
+
+/**
+ * 获取说话人对应的颜色
+ */
+const getSpeakerColor = (speaker) => {
+  // 从speaker标签中提取数字（如 speaker1 → 1）
+  const match = speaker.match(/\d+/)
+  const idx = match ? (parseInt(match[0]) - 1) % speakerColors.length : 0
+  return speakerColors[idx]
+}
+
+/**
+ * 保存说话人名称
+ */
+const saveSpeakerName = async (speaker) => {
+  const name = speakerEditValue.value.trim()
+  if (!name) {
+    editingSpeaker.value = null
+    return
+  }
+  // 更新本地映射
+  speakerMapping.value = { ...speakerMapping.value, [speaker]: name }
+  editingSpeaker.value = null
+
+  // 保存到后端
+  try {
+    await updateSpeakerMapping(meetingId.value, speakerMapping.value)
+  } catch {
+    // 错误已在拦截器处理
+  }
+}
+
+/**
+ * 恢复默认说话人名称
+ */
+const resetSpeakerNames = () => {
+  speakerMapping.value = {}
+  editingSpeaker.value = null
+  updateSpeakerMapping(meetingId.value, {}).catch(() => {})
+}
+
+/**
+ * 加载说话人名称映射
+ */
+const loadSpeakerMapping = async () => {
+  try {
+    const result = await getSpeakerMapping(meetingId.value)
+    speakerMapping.value = result.mapping || {}
+  } catch {
+    speakerMapping.value = {}
+  }
+}
 
 // 关键词拆分为数组
 const keywordList = computed(() => {
@@ -370,6 +488,8 @@ const statusText = (s) => {
 
 onMounted(async () => {
   await loadMeeting()
+  // 加载说话人名称映射
+  await loadSpeakerMapping()
   // 根据当前状态决定加载哪些数据
   if (meeting.value?.status === 'completed') {
     await loadSummary() // 包含转写数据
@@ -401,6 +521,31 @@ watch(() => meeting.value?.status, (newStatus) => {
 .header-actions {
   display: flex;
   gap: 8px;
+}
+
+/* 说话人名称工具栏 */
+.speaker-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #F5F7FA;
+  border-radius: 8px;
+  flex-wrap: wrap;
+}
+
+.speaker-toolbar-title {
+  font-size: 13px;
+  color: #606266;
+  font-weight: 500;
+}
+
+.speaker-editable-tag {
+  transition: transform 0.2s;
+}
+
+.speaker-editable-tag:hover {
+  transform: scale(1.05);
 }
 
 .transcript-segment {

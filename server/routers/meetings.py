@@ -11,8 +11,14 @@ from database import get_db
 from models.user import User
 from models.meeting import Meeting
 from routers.auth import get_current_user
-from schemas.meeting import MeetingResponse, MeetingListResponse
+from schemas.meeting import (
+    MeetingResponse,
+    MeetingListResponse,
+    DashboardStatsResponse,
+    SpeakerMappingRequest,
+)
 from utils.file_handler import validate_audio_file, save_upload_file, get_file_extension
+import json
 
 router = APIRouter()
 
@@ -151,3 +157,78 @@ async def delete_meeting(
     db.commit()
 
     return {"message": "会议已删除", "meeting_id": meeting_id}
+
+
+@router.get("/stats/dashboard", response_model=DashboardStatsResponse, summary="获取仪表盘统计")
+async def get_dashboard_stats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    获取当前用户的会议统计数据
+    包含：总数、已上传、转写中、已转写、摘要生成中、已完成、失败
+    """
+    base_query = db.query(Meeting).filter(Meeting.user_id == current_user.id)
+
+    total = base_query.count()
+    uploaded = base_query.filter(Meeting.status == "uploaded").count()
+    transcribing = base_query.filter(Meeting.status == "transcribing").count()
+    transcribed = base_query.filter(Meeting.status == "transcribed").count()
+    summarizing = base_query.filter(Meeting.status == "summarizing").count()
+    completed = base_query.filter(Meeting.status == "completed").count()
+    failed = base_query.filter(Meeting.status == "failed").count()
+
+    return DashboardStatsResponse(
+        total_meetings=total,
+        uploaded_count=uploaded,
+        transcribing_count=transcribing,
+        transcribed_count=transcribed,
+        summarizing_count=summarizing,
+        completed_count=completed,
+        failed_count=failed,
+    )
+
+
+@router.put("/{meeting_id}/speakers", summary="更新说话人名称映射")
+async def update_speaker_mapping(
+    meeting_id: int,
+    request: SpeakerMappingRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    设置说话人的显示名称映射
+    如 {"speaker1": "张医生", "speaker2": "李家属"}
+    """
+    meeting = db.query(Meeting).filter(
+        Meeting.id == meeting_id,
+        Meeting.user_id == current_user.id,
+    ).first()
+    if not meeting:
+        raise HTTPException(status_code=404, detail="会议不存在")
+
+    meeting.speaker_mapping = json.dumps(request.mapping, ensure_ascii=False)
+    db.commit()
+
+    return {"message": "说话人名称已更新", "mapping": request.mapping}
+
+
+@router.get("/{meeting_id}/speakers", summary="获取说话人名称映射")
+async def get_speaker_mapping(
+    meeting_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    获取说话人名称映射
+    """
+    meeting = db.query(Meeting).filter(
+        Meeting.id == meeting_id,
+        Meeting.user_id == current_user.id,
+    ).first()
+    if not meeting:
+        raise HTTPException(status_code=404, detail="会议不存在")
+
+    if meeting.speaker_mapping:
+        return {"mapping": json.loads(meeting.speaker_mapping)}
+    return {"mapping": {}}
