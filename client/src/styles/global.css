@@ -1,0 +1,54 @@
+/* ============================================================ */
+/* 基于LangChain的智能会议纪要助手系统 - 全局样式                */
+/* ============================================================ */
+
+/* CSS 变量定义 */
+:root {
+  --primary-color: #409EFF;
+  --success-color: #67C23A;
+  --warning-color: #E6A23C;
+  --danger-color: #F56C6C;
+  --text-primary: #303133;
+  --text-regular: #606266;
+  --text-secondary: #909399;
+  --border-color: #DCDFE6;
+  --bg-color: #F5F7FA;
+}
+
+/* 全局重置 */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  height: 100%;
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  color: var(--text-primary);
+  background-color: var(--bg-color);
+}
+
+/* 页面通用容器 */
+.page-container {
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* 卡片间距 */
+.card-margin {
+  margin-bottom: 16px;
+}
+
+/* 表格操作列按钮间距 */
+.table-actions .el-button {
+  margin-right: 8px;
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+  .page-container {
+    padding: 12px;
+  }
+}
