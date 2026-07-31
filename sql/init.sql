@@ -45,6 +45,8 @@ CREATE TABLE meetings (
     duration INT DEFAULT 0 COMMENT '音频时长(秒)',
     status ENUM('uploaded','transcribing','transcribed','summarizing','completed','failed') DEFAULT 'uploaded' COMMENT '处理状态',
     error_message TEXT DEFAULT NULL COMMENT '错误信息',
+    oss_file_id VARCHAR(200) DEFAULT NULL COMMENT 'DashScope OSS文件ID',
+    asr_task_id VARCHAR(200) DEFAULT NULL COMMENT 'DashScope ASR任务ID',
     speaker_mapping TEXT DEFAULT NULL COMMENT '说话人名称映射JSON',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',

@@ -253,7 +253,7 @@
  * 核心页面，展示 Tab 切换的完整会议纪要内容
  * 支持触发转写、生成纪要、导出等操作
  */
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElNotification } from 'element-plus'
 import { Loading, EditPen, Microphone, MagicStick } from '@element-plus/icons-vue'
@@ -534,26 +534,78 @@ const statusText = (s) => {
   return m[s] || s
 }
 
+// 轮询定时器
+let pollTimer = null
+
+/**
+ * 开始轮询会议状态（转写中/摘要生成中时）
+ */
+const startPolling = () => {
+  if (pollTimer) return
+  pollTimer = setInterval(async () => {
+    const status = meeting.value?.status
+    // 处理中则刷新状态
+    if (status === 'transcribing' || status === 'summarizing') {
+      await loadMeeting()
+    }
+    // 转写完成 → 加载转写结果
+    if (meeting.value?.status === 'transcribed' && status === 'transcribing') {
+      await loadTranscript()
+      stopPolling()
+    }
+    // 摘要完成 → 加载纪要
+    if (meeting.value?.status === 'completed' && status === 'summarizing') {
+      await loadSummary()
+      stopPolling()
+    }
+    // 失败 → 停止轮询
+    if (meeting.value?.status === 'failed') {
+      stopPolling()
+    }
+    // 稳定状态 → 停止轮询
+    if (!['transcribing', 'summarizing'].includes(meeting.value?.status)) {
+      stopPolling()
+    }
+  }, 5000) // 每5秒轮询一次
+}
+
+const stopPolling = () => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
 onMounted(async () => {
   await loadMeeting()
-  // 加载说话人名称映射
   await loadSpeakerMapping()
   // 根据当前状态决定加载哪些数据
   if (meeting.value?.status === 'completed') {
-    await loadSummary() // 包含转写数据
+    await loadSummary()
   } else if (meeting.value?.status === 'transcribed' || meeting.value?.status === 'summarizing') {
     await loadTranscript()
   }
+  // 处理中则开始轮询
+  if (['transcribing', 'summarizing'].includes(meeting.value?.status)) {
+    startPolling()
+  }
 })
 
-// 监听会议状态变化，自动刷新数据
+// 监听会议状态变化
 watch(() => meeting.value?.status, (newStatus) => {
   if (newStatus === 'completed') {
     loadSummary()
+    stopPolling()
   } else if (newStatus === 'transcribed') {
     loadTranscript()
+    stopPolling()
+  } else if (newStatus === 'transcribing' || newStatus === 'summarizing') {
+    startPolling()
   }
 })
+
+// 组件卸载时清理定时器
+onUnmounted(() => stopPolling())
 </script>
 
 <style scoped>

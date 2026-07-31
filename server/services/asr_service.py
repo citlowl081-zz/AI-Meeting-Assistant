@@ -16,6 +16,159 @@ from config import DASHSCOPE_API_KEY, ASR_MODEL
 NATIVE_ASR_FORMATS = {"wav", "mp3", "pcm"}
 
 
+# ============================================================
+# 异步转写 API（推荐使用）
+# 三步分离: OSS上传 → 提交任务 → 后台轮询
+# ============================================================
+
+def upload_to_oss(file_path: str) -> str:
+    """
+    将音频文件上传到 DashScope OSS，返回 file_id
+    此操作在上传会议时预先执行，转写时直接复用，省去重复上传时间
+
+    @param file_path: 音频文件本地路径
+    @return: DashScope OSS file_id
+    @raises Exception: 上传失败
+    """
+    from dashscope.files import Files
+
+    actual_path = _ensure_wav(file_path)
+    files_api = Files()
+
+    print(f"[ASR-OSS] 上传文件: {actual_path}")
+    upload_resp = files_api.upload(
+        file_path=os.path.abspath(actual_path),
+        purpose="asr_transcription",
+    )
+    if upload_resp.status_code != HTTPStatus.OK:
+        raise Exception(f"OSS上传失败: {upload_resp.message}")
+
+    uploaded_files = upload_resp.output.get("uploaded_files", [])
+    if not uploaded_files:
+        raise Exception("OSS上传成功但无文件返回")
+
+    file_id = uploaded_files[0].get("file_id", "")
+    print(f"[ASR-OSS] 上传成功, file_id={file_id}")
+    return file_id
+
+
+def get_oss_url(file_id: str) -> str:
+    """
+    根据 file_id 获取 OSS 下载 URL（用于传给 ASR API）
+
+    @param file_id: DashScope 文件ID
+    @return: OSS presigned URL
+    """
+    from dashscope.files import Files
+    files_api = Files()
+    get_resp = files_api.get(file_id=file_id)
+    if get_resp.status_code != HTTPStatus.OK:
+        raise Exception(f"获取OSS URL失败: {get_resp.message}")
+    return get_resp.output.get("url", "")
+
+
+def submit_asr_task(oss_url: str) -> str:
+    """
+    提交 ASR 转写任务，立即返回 task_id（不等待完成）
+
+    @param oss_url: 音频文件的 OSS URL
+    @return: DashScope ASR task_id
+    @raises Exception: 提交失败
+    """
+    dashscope.api_key = DASHSCOPE_API_KEY
+    print(f"[ASR] 提交转写任务, model={ASR_MODEL}")
+
+    task_response = dashscope.audio.asr.Transcription.async_call(
+        model=ASR_MODEL,
+        file_urls=[oss_url],
+        diarization_enabled=True,
+        speaker_count=0,
+    )
+    if task_response.status_code != HTTPStatus.OK:
+        raise Exception(f"ASR任务提交失败: {task_response.code} - {task_response.message}")
+
+    task_id = task_response.output.get("task_id", "")
+    print(f"[ASR] 任务已提交, task_id={task_id}")
+    return task_id
+
+
+def poll_asr_result(task_id: str) -> List[Dict]:
+    """
+    轮询 ASR 任务结果直到完成，解析并返回转写片段
+
+    @param task_id: DashScope ASR 任务ID
+    @return: 转写片段列表
+    @raises Exception: 任务失败或超时
+    """
+    dashscope.api_key = DASHSCOPE_API_KEY
+    print(f"[ASR] 轮询任务结果: {task_id}")
+
+    result_response = dashscope.audio.asr.Transcription.wait(task=task_id)
+
+    if result_response.status_code != HTTPStatus.OK:
+        raise Exception(
+            f"ASR转写失败: code={result_response.code}, message={result_response.message}"
+        )
+
+    # 解析结果（复用已有逻辑）
+    output = result_response.output
+    subtask_status = output.get("subtask_status", "")
+    if subtask_status == "FAILED":
+        raise Exception(
+            f"ASR子任务失败。错误码: {result_response.code}，"
+            f"详情: {json.dumps(output, ensure_ascii=False)[:300]}"
+        )
+
+    return _extract_segments_from_output(output)
+
+
+def _extract_segments_from_output(output: dict) -> List[Dict]:
+    """从DashScope ASR response的output中提取转写片段"""
+    results = output.get("results", [])
+    if not results:
+        return []
+
+    transcription_result = results[0]
+
+    # 方式1: transcription_url
+    transcription_url = transcription_result.get("transcription_url", "")
+    if transcription_url:
+        segments = _download_and_parse_transcription(transcription_url)
+        if segments:
+            return segments
+
+    # 方式2: sentences
+    sentences = transcription_result.get("sentences", [])
+    if sentences:
+        return _parse_sentences(sentences)
+
+    # 方式3: transcription_urls
+    urls = transcription_result.get("transcription_urls", [])
+    if urls:
+        all_segments = []
+        for url in urls:
+            segs = _download_and_parse_transcription(url)
+            all_segments.extend(segs)
+        if all_segments:
+            return all_segments
+
+    return []
+
+
+def _ensure_wav(file_path: str) -> str:
+    """确保文件是 WAV 格式，必要时用 ffmpeg 转换"""
+    file_ext = os.path.splitext(file_path)[1].lower().lstrip(".")
+    if file_ext in NATIVE_ASR_FORMATS:
+        return file_path
+    print(f"[ASR] 格式 {file_ext} 非原生支持，转WAV...")
+    converted = _convert_to_wav(file_path)
+    return converted if converted else file_path
+
+
+# ============================================================
+# 同步转写（保留兼容，内部使用异步三步）
+# ============================================================
+
 def transcribe_audio(file_path: str) -> List[Dict]:
     """
     调用百炼 Fun-ASR 模型进行语音转写（含说话人分离）

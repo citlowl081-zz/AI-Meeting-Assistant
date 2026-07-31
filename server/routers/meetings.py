@@ -2,12 +2,13 @@
 会议管理路由模块
 处理文件上传、会议列表、会议详情、删除
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from typing import Optional
+import threading
 
-from database import get_db
+from database import get_db, SessionLocal
 from models.user import User
 from models.meeting import Meeting
 from routers.auth import get_current_user
@@ -70,6 +71,30 @@ async def upload_meeting(
     db.add(meeting)
     db.commit()
     db.refresh(meeting)
+    meeting_id = meeting.id
+
+    # 5. 后台线程预上传文件到 OSS（不阻塞响应）
+    def _background_oss_upload(meeting_id: int, file_path: str):
+        """后台将文件上传到百炼OSS，转写时直接复用避免重复上传"""
+        db_bg = SessionLocal()
+        try:
+            from services.asr_service import upload_to_oss
+            oss_file_id = upload_to_oss(file_path)
+            meeting_bg = db_bg.query(Meeting).filter(Meeting.id == meeting_id).first()
+            if meeting_bg:
+                meeting_bg.oss_file_id = oss_file_id
+                db_bg.commit()
+                print(f"[OSS] 后台预上传完成 meeting={meeting_id} oss_id={oss_file_id}")
+        except Exception as e:
+            print(f"[OSS] 后台预上传失败 meeting={meeting_id}: {e}")
+        finally:
+            db_bg.close()
+
+    threading.Thread(
+        target=_background_oss_upload,
+        args=(meeting_id, stored_path),
+        daemon=True,
+    ).start()
 
     return MeetingResponse.model_validate(meeting)
 

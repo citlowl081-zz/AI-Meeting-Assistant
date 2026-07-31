@@ -2,12 +2,14 @@
 纪要管理路由模块
 处理语音转写(ASR)、AI摘要生成、纪要导出等核心功能
 """
+import threading
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from typing import Optional
 
-from database import get_db
+from database import get_db, SessionLocal
 from models.user import User
 from models.meeting import Meeting
 from models.transcript import Transcript
@@ -22,7 +24,7 @@ from schemas.summary import (
     SpeakerSummaryResponse,
     MeetingMinutesResponse,
 )
-from services.asr_service import transcribe_audio
+from services.asr_service import submit_asr_task, poll_asr_result, get_oss_url, upload_to_oss
 from services.llm_service import generate_summary, extract_keywords, extract_action_items, summarize_by_speaker
 from services.export_service import export_markdown, export_pdf, export_transcript_markdown, export_transcript_pdf
 
@@ -33,17 +35,24 @@ router = APIRouter()
 # 语音转写 (ASR)
 # ============================================================
 
-@router.post("/{meeting_id}/transcribe", summary="触发语音转写")
+@router.post("/{meeting_id}/transcribe", summary="触发语音转写（异步后台处理）")
 async def transcribe_meeting(
     meeting_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """
-    对已上传的会议音频/视频进行语音转写（Fun-ASR + 说话人分离）
-    转写完成后结果自动存入 transcripts 表
+    提交语音转写任务，立即返回（后台异步处理）
+
+    流程:
+    1. 获取预上传的 OSS URL（或即时上传）
+    2. 提交 DashScope ASR 任务 → 获取 task_id
+    3. 立即返回 "任务已提交"
+    4. 后台线程轮询任务状态 → 完成时自动保存结果
+
+    前端只需轮询 GET /meetings/{id} 检查 status 变化:
+    transcribing → transcribed (成功) / failed (失败)
     """
-    # 1. 获取会议信息，校验权限
     meeting = db.query(Meeting).filter(
         Meeting.id == meeting_id,
         Meeting.user_id == current_user.id,
@@ -57,26 +66,100 @@ async def transcribe_meeting(
     if not meeting.file_path:
         raise HTTPException(status_code=400, detail="会议没有可转写的音频文件")
 
-    # 2. 更新状态为转写中
+    # 1. 获取 OSS URL（优先用预上传的，否则即时上传）
+    oss_url = ""
+    if meeting.oss_file_id:
+        try:
+            oss_url = get_oss_url(meeting.oss_file_id)
+        except Exception:
+            pass  # OSS URL过期则重新上传
+
+    if not oss_url:
+        meeting.status = "transcribing"
+        db.commit()
+        meeting_id_val = meeting.id
+        file_path_val = meeting.file_path
+        # 上传到OSS并在后台线程中继续
+        threading.Thread(
+            target=_background_transcribe,
+            args=(meeting_id_val, file_path_val, None),
+            daemon=True,
+        ).start()
+        return {"message": "转写任务已提交，正在后台上传文件并处理...", "status": "transcribing"}
+
+    # 2. 提交ASR任务
+    try:
+        task_id = submit_asr_task(oss_url)
+    except Exception as e:
+        meeting.status = "failed"
+        meeting.error_message = f"提交ASR任务失败: {e}"
+        db.commit()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # 3. 存储task_id，启动后台轮询
     meeting.status = "transcribing"
+    meeting.asr_task_id = task_id
+    meeting.error_message = None
     db.commit()
 
+    # 4. 后台线程轮询结果
+    threading.Thread(
+        target=_background_transcribe,
+        args=(meeting_id, "", task_id),
+        daemon=True,
+    ).start()
+
+    return {
+        "message": "转写任务已提交，后台正在处理...",
+        "status": "transcribing",
+        "task_id": task_id,
+    }
+
+
+def _background_transcribe(meeting_id: int, file_path: str, task_id: Optional[str]):
+    """
+    后台转写工作线程
+    - 如果有 file_path 无 task_id: 先上传OSS再提交任务
+    - 如果有 task_id: 直接轮询等待结果
+    """
+    db = SessionLocal()
     try:
-        # 3. 调用 Fun-ASR 进行语音转写（带说话人分离）
-        segments = transcribe_audio(meeting.file_path)
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if not meeting:
+            return
 
-        # 3b. 如果转写结果为空，说明音频无法识别或解析失败
+        # 如果需要先上传
+        if not task_id and file_path:
+            try:
+                oss_id = upload_to_oss(file_path)
+                meeting.oss_file_id = oss_id
+                db.commit()
+                oss_url = get_oss_url(oss_id)
+                task_id = submit_asr_task(oss_url)
+                meeting.asr_task_id = task_id
+                db.commit()
+            except Exception as e:
+                meeting.status = "failed"
+                meeting.error_message = f"OSS上传或任务提交失败: {e}"
+                db.commit()
+                return
+
+        # 轮询等待ASR结果
+        print(f"[BG-ASR] 后台轮询 task_id={task_id}")
+        segments = poll_asr_result(task_id)
+
         if not segments:
-            raise Exception("转写结果为空，音频可能无法识别或格式不支持")
+            meeting.status = "failed"
+            meeting.error_message = "转写结果为空，音频可能无法识别"
+            db.commit()
+            return
 
-        # 4. 删除旧的转写记录（如果已存在）
+        # 保存转写结果
         db.query(Transcript).filter(Transcript.meeting_id == meeting_id).delete()
-
-        # 5. 将转写结果批量插入数据库
         for i, seg in enumerate(segments):
             transcript = Transcript(
                 meeting_id=meeting_id,
-                speaker=seg.get("speaker", f"speaker_{i}"),
+                speaker=seg.get("speaker", f"speaker{i+1}"),
                 start_time=seg.get("start_time", 0),
                 end_time=seg.get("end_time", 0),
                 content=seg.get("content", ""),
@@ -84,19 +167,23 @@ async def transcribe_meeting(
             )
             db.add(transcript)
 
-        # 6. 更新状态为已转写
         meeting.status = "transcribed"
         meeting.error_message = None
         db.commit()
-
-        return {"message": "转写完成", "segments_count": len(segments)}
+        print(f"[BG-ASR] 转写完成 meeting={meeting_id}, segments={len(segments)}")
 
     except Exception as e:
-        # 转写失败，记录错误信息
-        meeting.status = "failed"
-        meeting.error_message = str(e)
-        db.commit()
-        raise HTTPException(status_code=500, detail=f"语音转写失败: {str(e)}")
+        print(f"[BG-ASR] 转写失败 meeting={meeting_id}: {e}")
+        try:
+            meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+            if meeting:
+                meeting.status = "failed"
+                meeting.error_message = str(e)
+                db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
 
 
 @router.get("/{meeting_id}/transcript", response_model=TranscriptResponse, summary="获取转写结果")

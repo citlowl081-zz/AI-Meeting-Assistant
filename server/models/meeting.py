@@ -38,6 +38,10 @@ class Meeting(Base):
         comment="处理状态",
     )
     error_message = Column(Text, nullable=True, comment="错误信息")
+    # OSS上的文件ID，上传时预先存好，转写时直接复用，避免重复上传
+    oss_file_id = Column(String(200), nullable=True, comment="DashScope OSS文件ID")
+    # 异步转写任务ID，用于后台轮询
+    asr_task_id = Column(String(200), nullable=True, comment="DashScope ASR任务ID")
     # JSON 格式存储说话人名称映射，如 {"speaker1": "张医生", "speaker2": "李家属"}
     speaker_mapping = Column(Text, nullable=True, comment="说话人名称映射JSON")
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")
