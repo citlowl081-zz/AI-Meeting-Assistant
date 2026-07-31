@@ -9,7 +9,8 @@ from fastapi.staticfiles import StaticFiles
 import os
 
 from config import CORS_ORIGINS, UPLOAD_DIR
-from database import init_db
+from database import init_db, SessionLocal
+from models.meeting import Meeting
 from routers import auth, meetings, summary
 
 
@@ -29,10 +30,33 @@ async def lifespan(app: FastAPI):
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     print(f"[系统启动] 上传目录已就绪: {UPLOAD_DIR}")
 
+    # 恢复服务重启前卡在"处理中"状态的会议
+    _recover_stale_meetings()
+
     yield  # 应用运行中...
 
     # === 关闭时执行 ===
     print("[系统关闭] 正在清理资源...")
+
+
+def _recover_stale_meetings():
+    """服务重启时，将卡在"处理中"的会议重置，避免永久卡死"""
+    db = SessionLocal()
+    try:
+        stale = db.query(Meeting).filter(
+            Meeting.status.in_(["transcribing", "summarizing"])
+        ).all()
+        if stale:
+            for m in stale:
+                m.status = "uploaded" if m.status == "transcribing" else "transcribed"
+                m.error_message = "服务重启，处理中断，请重新操作"
+            db.commit()
+            print(f"[启动恢复] 已重置 {len(stale)} 个中断的会议")
+    except Exception as e:
+        print(f"[启动恢复] 恢复失败: {e}")
+        db.rollback()
+    finally:
+        db.close()
 
 
 # 创建 FastAPI 应用实例

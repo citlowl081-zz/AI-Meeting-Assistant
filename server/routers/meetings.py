@@ -113,6 +113,14 @@ async def list_meetings(
     @param page_size: 每页记录数，默认10条
     @param status: 按状态筛选（可选）
     """
+    # 分页参数校验
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 10
+    if page_size > 100:
+        page_size = 100
+
     # 构建查询条件
     query = db.query(Meeting).filter(Meeting.user_id == current_user.id)
     if status:

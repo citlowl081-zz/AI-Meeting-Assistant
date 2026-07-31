@@ -256,7 +256,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElNotification } from 'element-plus'
-import { Loading, EditPen, Microphone, MagicStick } from '@element-plus/icons-vue'
+import { Loading, EditPen, Microphone, MagicStick, ArrowLeft, ArrowDown, Document, Printer } from '@element-plus/icons-vue'
 import AppLayout from '../components/AppLayout.vue'
 import {
   getMeetingDetail,
@@ -326,8 +326,8 @@ const getSpeakerName = (speaker) => {
  * 获取说话人对应的颜色
  */
 const getSpeakerColor = (speaker) => {
-  // 从speaker标签中提取数字（如 speaker1 → 1）
-  const match = speaker.match(/\d+/)
+  if (!speaker) return speakerColors[0]
+  const match = String(speaker).match(/\d+/)
   const idx = match ? (parseInt(match[0]) - 1) % speakerColors.length : 0
   return speakerColors[idx]
 }

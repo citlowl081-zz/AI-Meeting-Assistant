@@ -4,7 +4,9 @@
 """
 import threading
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import os as os_module
+
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -71,8 +73,8 @@ async def transcribe_meeting(
     if meeting.oss_file_id:
         try:
             oss_url = get_oss_url(meeting.oss_file_id)
-        except Exception:
-            pass  # OSS URL过期则重新上传
+        except Exception as e:
+            print(f"[ASR] OSS URL获取失败(将重新上传): {e}")
 
     if not oss_url:
         meeting.status = "transcribing"
@@ -361,9 +363,12 @@ async def summarize_meeting(
         return {"message": "会议纪要生成完成"}
 
     except Exception as e:
-        meeting.status = "failed"
-        meeting.error_message = str(e)
-        db.commit()
+        db.rollback()  # 回滚所有部分写入，避免数据不一致
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if meeting:
+            meeting.status = "failed"
+            meeting.error_message = str(e)
+            db.commit()
         raise HTTPException(status_code=500, detail=f"纪要生成失败: {str(e)}")
 
 
@@ -441,6 +446,7 @@ async def export_minutes(
     meeting_id: int,
     format: str = Query("md", description="导出格式: md 或 pdf"),
     export_type: str = Query("full", description="导出类型: full=完整纪要, transcript=纯对话"),
+    background_tasks: BackgroundTasks = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -511,6 +517,10 @@ async def export_minutes(
             file_path = export_markdown(context)
             media_type = "text/markdown; charset=utf-8"
             filename = f"{meeting.title}_会议纪要.md"
+
+    # 响应发送后自动清理临时文件
+    if background_tasks:
+        background_tasks.add_task(os_module.remove, file_path)
 
     return FileResponse(
         path=file_path,

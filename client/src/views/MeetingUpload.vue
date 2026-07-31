@@ -97,7 +97,7 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { UploadFilled } from '@element-plus/icons-vue'
+import { UploadFilled, Upload } from '@element-plus/icons-vue'
 import AppLayout from '../components/AppLayout.vue'
 import { uploadMeeting } from '../api/meeting'
 
@@ -151,7 +151,7 @@ const beforeUpload = (file) => {
     ElMessage.error('文件大小超过 6GB 限制')
     return false
   }
-  return false // 阻止自动上传，手动控制
+  return true
 }
 
 /**

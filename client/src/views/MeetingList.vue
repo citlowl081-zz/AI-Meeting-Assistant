@@ -103,6 +103,7 @@
  */
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
+import { Upload } from '@element-plus/icons-vue'
 import AppLayout from '../components/AppLayout.vue'
 import { getMeetingList, deleteMeeting } from '../api/meeting'
 

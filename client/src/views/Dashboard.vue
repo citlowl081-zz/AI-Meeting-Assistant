@@ -136,7 +136,8 @@ const formatDate = (d) => (d ? new Date(d).toLocaleString('zh-CN') : '-')
 const formatFileSize = (b) => {
   if (!b) return '-'
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`
-  return `${(b / (1024 * 1024)).toFixed(2)} GB`
+  if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`
+  return `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
 const getStatusType = (s) => {
