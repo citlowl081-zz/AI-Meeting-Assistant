@@ -1,0 +1,72 @@
+# ============================================================
+# Docker Compose - 一键启动全部服务
+# 基于LangChain的智能会议纪要助手系统
+#
+# 启动: docker compose up -d
+# 停止: docker compose down
+# ============================================================
+services:
+  # MySQL 8 数据库
+  db:
+    image: mysql:8.0
+    container_name: meeting_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-123456}
+      MYSQL_DATABASE: ${DB_NAME:-meeting_assistant}
+      MYSQL_CHARSET: utf8mb4
+      MYSQL_COLLATION: utf8mb4_unicode_ci
+    ports:
+      - "3308:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/01_init.sql
+      - ./sql/test_data.sql:/docker-entrypoint-initdb.d/02_test_data.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI 后端
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: meeting_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - DASHSCOPE_WORKSPACE_ID=${DASHSCOPE_WORKSPACE_ID}
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_USER=root
+      - DB_PASSWORD=${DB_PASSWORD:-123456}
+      - DB_NAME=${DB_NAME:-meeting_assistant}
+      - JWT_SECRET=${JWT_SECRET:-meeting-assistant-secret-change-in-production}
+      - UPLOAD_DIR=uploads/
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads_data:/app/uploads
+      - exports_data:/app/exports
+
+  # Vue3 前端 + Nginx
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: meeting_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  mysql_data:
+  uploads_data:
+  exports_data:

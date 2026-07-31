@@ -108,7 +108,7 @@ HTML_TEMPLATE = Template("""<!DOCTYPE html>
     <title>{{ title }}</title>
     <style>
         body {
-            font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+            font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", "STHeiti", sans-serif;
             line-height: 1.8;
             color: #333;
             max-width: 800px;
@@ -325,7 +325,7 @@ TRANSCRIPT_HTML_TEMPLATE = Template("""<!DOCTYPE html>
     <meta charset="UTF-8">
     <title>{{ title }} - 对话记录</title>
     <style>
-        body { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; line-height: 1.8; color: #333; max-width: 800px; margin: 0 auto; padding: 40px 20px; }
+        body { font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", sans-serif; line-height: 1.8; color: #333; max-width: 800px; margin: 0 auto; padding: 40px 20px; }
         h1 { text-align: center; color: #1a1a2e; border-bottom: 2px solid #409EFF; padding-bottom: 16px; }
         .meta { text-align: center; color: #909399; margin-bottom: 24px; }
         .segment { margin: 14px 0; padding: 14px; background: #FAFAFA; border-radius: 8px; border-left: 3px solid #409EFF; }

@@ -449,11 +449,12 @@ def _parse_sentences(sentences: List[Dict]) -> List[Dict]:
 
     for i, sent in enumerate(sentences):
         # 兼容多种字段名：speaker_id / speaker / spk
-        raw_speaker = (
-            sent.get("speaker_id")
-            or sent.get("speaker")
-            or sent.get("spk")
-        )
+        # 注意: speaker_id 可能为 0，不能用 or（0 是 falsy）
+        raw_speaker = sent.get("speaker_id")
+        if raw_speaker is None:
+            raw_speaker = sent.get("speaker")
+        if raw_speaker is None:
+            raw_speaker = sent.get("spk")
         # 规范化说话人标签为 speaker1, speaker2, speaker3...
         if raw_speaker is not None:
             raw_key = str(raw_speaker)
@@ -467,9 +468,9 @@ def _parse_sentences(sentences: List[Dict]) -> List[Dict]:
         begin = sent.get("begin_time", sent.get("start_time", sent.get("begin", 0)))
         end = sent.get("end_time", sent.get("end", 0))
         # 如果时间值大于 1000，说明是毫秒单位，转换为秒
-        if isinstance(begin, (int, float)) and begin > 1000:
+        if isinstance(begin, (int, float)) and begin >= 1000:
             begin = begin / 1000.0
-        if isinstance(end, (int, float)) and end > 1000:
+        if isinstance(end, (int, float)) and end >= 1000:
             end = end / 1000.0
 
         text = sent.get("text", sent.get("content", sent.get("sentence", "")))
