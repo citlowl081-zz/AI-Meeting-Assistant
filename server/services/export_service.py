@@ -241,6 +241,17 @@ HTML_TEMPLATE = Template("""<!DOCTYPE html>
 """)
 
 
+def _ensure_weasyprint_deps():
+    """macOS 上 WeasyPrint 需要设置库路径才能找到 gobject/pango 等系统库"""
+    import platform
+    if platform.system() == 'Darwin':
+        lib_path = '/opt/homebrew/lib'
+        if lib_path not in os.environ.get('DYLD_LIBRARY_PATH', ''):
+            os.environ['DYLD_LIBRARY_PATH'] = (
+                lib_path + ':' + os.environ.get('DYLD_LIBRARY_PATH', '')
+            )
+
+
 def export_pdf(context: Dict) -> str:
     """
     将会议纪要数据渲染为 PDF 格式文件
@@ -249,6 +260,7 @@ def export_pdf(context: Dict) -> str:
     @param context: 包含会议所有信息的字典（同 export_markdown）
     @return: PDF 文件的完整路径
     """
+    _ensure_weasyprint_deps()
     from weasyprint import HTML
 
     # 1. 使用 Jinja2 模板渲染 HTML
@@ -344,6 +356,7 @@ TRANSCRIPT_HTML_TEMPLATE = Template("""<!DOCTYPE html>
 
 def export_transcript_pdf(context: Dict) -> str:
     """导出纯发言对话为 PDF"""
+    _ensure_weasyprint_deps()
     from weasyprint import HTML
     html_content = TRANSCRIPT_HTML_TEMPLATE.render(**context)
     html_filename = f"{uuid.uuid4().hex[:8]}_transcript_temp.html"

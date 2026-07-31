@@ -20,3 +20,4 @@ class User(Base):
     updated_at = Column(
         DateTime, server_default=func.now(), onupdate=func.now(), comment="更新时间"
     )
+
