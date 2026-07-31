@@ -272,3 +272,89 @@ def export_pdf(context: Dict) -> str:
         pass
 
     return pdf_path
+
+
+# ============================================================
+# 纯对话导出模板（仅发言人对话，不含摘要/待办）
+# ============================================================
+TRANSCRIPT_MD_TEMPLATE = Template("""# {{ title }} - 对话记录
+
+> **会议时间**: {{ date }}
+> **对话段数**: {{ transcripts|length }}
+
+---
+
+{% for seg in transcripts %}
+**[{{ seg.speaker }}]** ({{ "%.1f"|format(seg.start_time) }}s - {{ "%.1f"|format(seg.end_time) }}s)
+
+{{ seg.content }}
+
+{% endfor %}
+
+---
+
+> 由 **基于LangChain的智能会议纪要助手系统** 自动生成
+""")
+
+
+def export_transcript_markdown(context: Dict) -> str:
+    """导出纯发言对话为 Markdown"""
+    content = TRANSCRIPT_MD_TEMPLATE.render(**context)
+    filename = f"{uuid.uuid4().hex[:8]}_transcript.md"
+    file_path = os.path.join(EXPORT_DIR, filename)
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return file_path
+
+
+TRANSCRIPT_HTML_TEMPLATE = Template("""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title }} - 对话记录</title>
+    <style>
+        body { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; line-height: 1.8; color: #333; max-width: 800px; margin: 0 auto; padding: 40px 20px; }
+        h1 { text-align: center; color: #1a1a2e; border-bottom: 2px solid #409EFF; padding-bottom: 16px; }
+        .meta { text-align: center; color: #909399; margin-bottom: 24px; }
+        .segment { margin: 14px 0; padding: 14px; background: #FAFAFA; border-radius: 8px; border-left: 3px solid #409EFF; }
+        .speaker { font-weight: 600; color: #409EFF; }
+        .time { color: #909399; font-size: 12px; margin-left: 8px; }
+        .content { margin-top: 6px; line-height: 1.9; }
+        .footer { text-align: center; color: #C0C4CC; font-size: 12px; margin-top: 40px; border-top: 1px solid #EBEEF5; padding-top: 16px; }
+        @page { size: A4; margin: 2cm; }
+    </style>
+</head>
+<body>
+    <h1>{{ title }}</h1>
+    <p class="meta">会议时间: {{ date }} | 对话段数: {{ transcripts|length }}</p>
+
+    {% for seg in transcripts %}
+    <div class="segment">
+        <span class="speaker">[{{ seg.speaker }}]</span>
+        <span class="time">({{ "%.1f"|format(seg.start_time) }}s - {{ "%.1f"|format(seg.end_time) }}s)</span>
+        <p class="content">{{ seg.content }}</p>
+    </div>
+    {% endfor %}
+
+    <div class="footer"><p>由 基于LangChain的智能会议纪要助手系统 自动生成</p></div>
+</body>
+</html>
+""")
+
+
+def export_transcript_pdf(context: Dict) -> str:
+    """导出纯发言对话为 PDF"""
+    from weasyprint import HTML
+    html_content = TRANSCRIPT_HTML_TEMPLATE.render(**context)
+    html_filename = f"{uuid.uuid4().hex[:8]}_transcript_temp.html"
+    html_path = os.path.join(EXPORT_DIR, html_filename)
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html_content)
+    pdf_filename = f"{uuid.uuid4().hex[:8]}_transcript.pdf"
+    pdf_path = os.path.join(EXPORT_DIR, pdf_filename)
+    HTML(filename=html_path).write_pdf(pdf_path)
+    try:
+        os.remove(html_path)
+    except OSError:
+        pass
+    return pdf_path

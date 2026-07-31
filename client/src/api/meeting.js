@@ -89,11 +89,12 @@ export function getMeetingSummary(id) {
  * 导出会议纪要
  * @param {number} id - 会议ID
  * @param {string} format - 导出格式 'md' 或 'pdf'
+ * @param {string} exportType - 导出类型 'full'=完整纪要 'transcript'=纯对话
  * @returns {Promise} Blob 文件流
  */
-export async function exportMinutes(id, format = 'md') {
+export async function exportMinutes(id, format = 'md', exportType = 'full') {
   const response = await api.get(`/meetings/${id}/export`, {
-    params: { format },
+    params: { format, export_type: exportType },
     responseType: 'blob',
   })
   return response

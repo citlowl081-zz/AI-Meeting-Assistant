@@ -24,7 +24,7 @@ from schemas.summary import (
 )
 from services.asr_service import transcribe_audio
 from services.llm_service import generate_summary, extract_keywords, extract_action_items, summarize_by_speaker
-from services.export_service import export_markdown, export_pdf
+from services.export_service import export_markdown, export_pdf, export_transcript_markdown, export_transcript_pdf
 
 router = APIRouter()
 
@@ -353,11 +353,14 @@ async def get_summary(
 async def export_minutes(
     meeting_id: int,
     format: str = Query("md", description="导出格式: md 或 pdf"),
+    export_type: str = Query("full", description="导出类型: full=完整纪要, transcript=纯对话"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """
     导出会议纪要为 Markdown 或 PDF 格式
+    - export_type=full: 完整纪要（摘要+待办+对话+发言人总结）
+    - export_type=transcript: 纯发言对话（仅发言人对话内容）
     """
     # 校验会议权限
     meeting = db.query(Meeting).filter(
@@ -400,15 +403,27 @@ async def export_minutes(
         ],
     }
 
-    # 根据格式导出
-    if format == "pdf":
-        file_path = export_pdf(context)
-        media_type = "application/pdf"
-        filename = f"{meeting.title}_会议纪要.pdf"
+    # 根据导出类型和格式导出
+    if export_type == "transcript":
+        # 纯对话导出
+        if format == "pdf":
+            file_path = export_transcript_pdf(context)
+            media_type = "application/pdf"
+            filename = f"{meeting.title}_对话记录.pdf"
+        else:
+            file_path = export_transcript_markdown(context)
+            media_type = "text/markdown; charset=utf-8"
+            filename = f"{meeting.title}_对话记录.md"
     else:
-        file_path = export_markdown(context)
-        media_type = "text/markdown; charset=utf-8"
-        filename = f"{meeting.title}_会议纪要.md"
+        # 完整纪要导出
+        if format == "pdf":
+            file_path = export_pdf(context)
+            media_type = "application/pdf"
+            filename = f"{meeting.title}_会议纪要.pdf"
+        else:
+            file_path = export_markdown(context)
+            media_type = "text/markdown; charset=utf-8"
+            filename = f"{meeting.title}_会议纪要.md"
 
     return FileResponse(
         path=file_path,

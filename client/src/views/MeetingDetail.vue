@@ -10,17 +10,35 @@
           <h2 style="display: inline; margin-left: 8px;">{{ meeting?.title || '会议详情' }}</h2>
         </div>
         <div class="header-actions">
-          <el-dropdown @command="handleExport">
-            <el-button type="primary" :disabled="meeting?.status !== 'completed'">
+          <!-- 导出纯对话：转写完成后即可用 -->
+          <el-dropdown @command="handleExportTranscript" v-if="canExportTranscript">
+            <el-button>
+              导出对话 <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="transcript-md">
+                  <el-icon><Document /></el-icon> 对话 Markdown
+                </el-dropdown-item>
+                <el-dropdown-item command="transcript-pdf">
+                  <el-icon><Printer /></el-icon> 对话 PDF
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+
+          <!-- 导出完整纪要：摘要生成完成后才可用 -->
+          <el-dropdown @command="handleExportFull" v-if="meeting?.status === 'completed'">
+            <el-button type="primary">
               导出纪要 <el-icon class="el-icon--right"><ArrowDown /></el-icon>
             </el-button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="md">
-                  <el-icon><Document /></el-icon> 导出 Markdown
+                <el-dropdown-item command="full-md">
+                  <el-icon><Document /></el-icon> 纪要 Markdown
                 </el-dropdown-item>
-                <el-dropdown-item command="pdf">
-                  <el-icon><Printer /></el-icon> 导出 PDF
+                <el-dropdown-item command="full-pdf">
+                  <el-icon><Printer /></el-icon> 纪要 PDF
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -272,6 +290,12 @@ const canSummarize = computed(() => {
   return ['transcribed', 'completed'].includes(meeting.value.status)
 })
 
+// 是否可以导出纯对话：已转写/已完成 状态下可以
+const canExportTranscript = computed(() => {
+  if (!meeting.value) return false
+  return ['transcribed', 'summarizing', 'completed'].includes(meeting.value.status)
+})
+
 // 转写数据
 const transcript = ref(null)
 // 完整纪要数据（摘要 + 待办 + 发言人总结）
@@ -446,24 +470,44 @@ const doSummarize = async () => {
 }
 
 /**
- * 导出纪要
+ * 导出纯对话（转写后即可用）
  */
-const handleExport = async (format) => {
+const handleExportTranscript = async (command) => {
+  const format = command === 'transcript-pdf' ? 'pdf' : 'md'
+  const ext = format === 'pdf' ? 'pdf' : 'md'
+  await doExport(format, 'transcript', `${meeting.value?.title || '会议'}_对话记录.${ext}`)
+}
+
+/**
+ * 导出完整纪要（摘要生成后才可用）
+ */
+const handleExportFull = async (command) => {
+  const format = command === 'full-pdf' ? 'pdf' : 'md'
+  const ext = format === 'pdf' ? 'pdf' : 'md'
+  await doExport(format, 'full', `${meeting.value?.title || '会议'}_会议纪要.${ext}`)
+}
+
+/**
+ * 通用导出逻辑
+ */
+const doExport = async (format, exportType, filename) => {
   try {
-    ElMessage.info(`正在导出 ${format.toUpperCase()} 文件...`)
-    const blob = await exportMinutes(meetingId.value, format)
-    // 创建下载链接
+    ElMessage.info(`正在导出${exportType === 'transcript' ? '对话' : '纪要'} ${format.toUpperCase()}...`)
+    const blob = await exportMinutes(meetingId.value, format, exportType)
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `${meeting.value?.title || '会议纪要'}_纪要.${format}`
+    link.download = filename
     document.body.appendChild(link)
     link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
+    // 延迟清理，确保下载触发
+    setTimeout(() => {
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+    }, 200)
     ElMessage.success(`${format.toUpperCase()} 导出成功`)
   } catch {
-    // 错误已在拦截器处理
+    ElMessage.error('导出失败，请稍后重试')
   }
 }
 
